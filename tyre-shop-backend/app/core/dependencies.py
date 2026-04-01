@@ -8,7 +8,8 @@ from app.core.security import decode_access_token
 
 from fastapi import HTTPException, status
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+# oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login-form")
 
 
 # -------------------------

@@ -125,64 +125,84 @@ def sell_tyre(
     if not current_user.shop_id:
         raise HTTPException(status_code=403, detail="Not assigned to any shop")
 
-    tyre = db.query(Tyre).filter(Tyre.id == data.tyre_id).first()
-
-    if not tyre:
-        raise HTTPException(status_code=404, detail="Tyre not found")
-
-    # 🔐 SHOP ISOLATION
-    require_same_shop(current_user, tyre.shop_id)
-
-    inventory = db.query(Inventory).filter(Inventory.tyre_id == tyre.id).first()
-
-    if inventory.quantity < data.quantity:
-        raise HTTPException(status_code=400, detail="Insufficient stock")
-
-    # 🔥 STEP 1 — Get latest purchase price
-    latest_purchase = db.query(Purchase)\
-        .filter(Purchase.tyre_id == tyre.id)\
-        .order_by(Purchase.id.desc())\
-        .first()
-
-    if not latest_purchase:
-        raise HTTPException(status_code=400, detail="No purchase history found")
-
-    latest_cp = latest_purchase.purchase_price
-
-    # 🔥 STEP 2 — Get shop margin
-    shop = db.query(Shop).filter(Shop.id == current_user.shop_id).first()
-
-    margin = shop.margin_per_tyre if shop and shop.margin_per_tyre else 350
-
-    # 🔥 STEP 3 — Calculate suggested price
-    calculated_price = latest_cp + margin
-
-    # 🔥 STEP 4 — Assistant override
-    final_price = data.selling_price if data.selling_price else calculated_price
-
-    # 🔥 STEP 5 — Safety check (NO LOSS)
-    if final_price < latest_cp:
-        raise HTTPException(status_code=400, detail="Cannot sell below cost price")
-
     try:
+        # 🔹 STEP 1: Get tyre (no lock needed here)
+        tyre = db.query(Tyre).filter(Tyre.id == data.tyre_id).first()
+
+        if not tyre:
+            raise HTTPException(status_code=404, detail="Tyre not found")
+
+        # 🔐 SHOP ISOLATION
+        require_same_shop(current_user, tyre.shop_id)
+
+        # 🔒 STEP 2: LOCK INVENTORY ROW (CRITICAL)
+        inventory = (
+            db.query(Inventory)
+            .filter(Inventory.tyre_id == tyre.id)
+            .with_for_update()
+            .first()
+        )
+
+        if not inventory:
+            raise HTTPException(status_code=404, detail="Inventory not found")
+
+        # 🔥 STEP 3: CHECK STOCK AFTER LOCK
+        if inventory.quantity < data.quantity:
+            raise HTTPException(status_code=400, detail="Insufficient stock")
+
+        # 🔹 STEP 4: Get latest purchase price
+        latest_purchase = (
+            db.query(Purchase)
+            .filter(Purchase.tyre_id == tyre.id)
+            .order_by(Purchase.id.desc())
+            .first()
+        )
+
+        if not latest_purchase:
+            raise HTTPException(status_code=400, detail="No purchase history found")
+
+        latest_cp = latest_purchase.purchase_price
+
+        # 🔹 STEP 5: Get shop margin
+        shop = db.query(Shop).filter(Shop.id == current_user.shop_id).first()
+
+        margin = shop.margin_per_tyre if shop and shop.margin_per_tyre else 350
+
+        calculated_price = latest_cp + margin
+
+        # 🔹 STEP 6: Assistant override
+        final_price = data.selling_price if data.selling_price else calculated_price
+
+        # 🔹 STEP 7: No loss rule
+        if final_price < latest_cp:
+            raise HTTPException(status_code=400, detail="Cannot sell below cost price")
+
+        # 🔥 STEP 8: UPDATE STOCK (SAFE NOW)
         inventory.quantity -= data.quantity
 
+        # 🔹 STEP 9: CREATE SALE
         sale = Sale(
             tyre_id=tyre.id,
             quantity=data.quantity,
             selling_price=final_price,
-            cost_price = latest_cp
+            cost_price=latest_cp
         )
 
         db.add(sale)
+
+        # 🔥 STEP 10: COMMIT (ENDS LOCK)
         db.commit()
 
-    except:
+        return {
+            "message": "Sale recorded",
+            "remaining_stock": inventory.quantity,
+            "selling_price_used": final_price
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail="Sale failed")
-
-    return {
-        "message": "Sale recorded",
-        "remaining_stock": inventory.quantity,
-        "selling_price_used": final_price
-    }
