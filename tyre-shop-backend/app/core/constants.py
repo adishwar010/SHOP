@@ -1,0 +1,10 @@
+class Roles:
+    ADMIN = "ADMIN"
+    SHOP_ADMIN = "SHOP_ADMIN"
+    SALES_ASSISTANT = "SALES_ASSISTANT"
+
+
+class RequestStatus:
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"

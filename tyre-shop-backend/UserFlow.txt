@@ -1,0 +1,62 @@
+ADMIN → creates shop + shop admin
+        ↓
+Shop admin gets shop_code
+        ↓
+Assistant registers
+        ↓
+Assistant requests join
+        ↓
+Shop admin approves/rejects
+        ↓
+Approved → user mapped to shop
+Rejected → no access
+Expired → deleted
+
+
+
+Create a product admin using create-admin.py
+
+Now create a shop and shop admin using
+API: /admin/create-shop-admin
+Example Input
+{
+  "name": "Raj",
+  "email": "raj@gmail.com",
+  "password": "123456",
+  "shop_name": "Raj Tyres",
+  "gst_number": "GST123"
+}
+
+Then Create a sales assistant using register option
+API: /auth/register
+Example Input
+{
+  "name": "string",
+  "email": "user@example.com",
+  "password": "string",
+  "dob": "2026-03-31"
+}
+
+sales assistant must be approved before logging In
+
+For approving follow
+
+Send a joining req to shop
+API: /shop/request-join
+Example Input:
+{
+  "shop_code": "string"
+}
+
+SHOP admin can view the requests he received from people joining his shop as assistant
+GET API: /shop/join-requests 
+Give the user id as Shop Admins UID
+
+SHOP Admin can approve the request
+API: /shop/approve-request/{request_id}
+Request ID will be next to id in join-request
+
+SHOP Admin can reject the request
+API: /shop/reject-request/{request_id}
+Request ID will be next to id in join-request
+

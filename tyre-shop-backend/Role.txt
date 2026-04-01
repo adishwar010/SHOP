@@ -1,0 +1,33 @@
+🧑‍💻 SUPER ADMIN (Platform Admin)
+Created via create_admin.py
+Role = ADMIN
+Can:
+Create Shop + Shop Admin
+
+
+🧑‍💼 SHOP ADMIN
+Created by ADMIN
+Gets:
+shop_id
+shop_code
+Can:
+Approve / reject join requests
+
+
+👨‍🔧 SALES ASSISTANT
+Registers normally
+Enters shop_code
+Creates Join Request
+Status = PENDING
+
+
+🔄 JOIN REQUEST FLOW [ASSISTANT]
+Register → Request Join → PENDING
+                         ↓
+                Shop Admin approves/rejects
+                         ↓
+      APPROVED → mapped to shop
+      REJECTED → stays unmapped
+      
+⏳ EXPIRY RULE
+PENDING request → expires after 7 days → deleted

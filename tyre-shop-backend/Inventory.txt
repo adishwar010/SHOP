@@ -1,0 +1,45 @@
+Core Goal
+Track tyres → manage stock → record purchases → record sales → calculate profit
+
+🧠 REAL-WORLD THINKING
+
+Your shop deals with:
+Brands: MRF, Yokohama, Apollo
+Tyre sizes: 195/65 R15, etc.
+Buying price varies per purchase
+Selling price varies per sale
+
+👉 So we CANNOT store price in tyre directly
+
+
+🧱 FINAL DATA MODEL (IMPORTANT)
+
+1. TYRE (Product Master)
+What the tyre is
+Fields:
+id
+brand
+size
+type (optional)
+
+2. INVENTORY
+How many tyres in stock
+Fields:
+tyre_id
+quantity
+
+3. PURCHASE
+Stock coming in
+Fields:
+tyre_id
+quantity
+purchase_price
+date
+
+4. SALE
+Stock going out
+Fields:
+tyre_id
+quantity
+selling_price
+date
