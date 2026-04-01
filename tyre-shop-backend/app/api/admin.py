@@ -9,11 +9,20 @@ from app.core.security import hash_password
 from app.core.constants import Roles
 from app.utils.shop_code import generate_shop_code
 
-router = APIRouter()
+from app.core.dependencies import get_current_user
+from app.core.permissions import require_admin
+
+router = APIRouter(tags=["Admin"])
 
 
 @router.post("/create-shop-admin")
-def create_shop_admin(data: CreateShopAdmin, db: Session = Depends(get_db)):
+def create_shop_admin(
+    data: CreateShopAdmin,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)  # ✅ inject user
+):
+    # 🔐 RBAC CHECK
+    require_admin(current_user)
 
     # 🔹 Check if user exists
     existing_user = db.query(User).filter(User.email == data.email).first()
@@ -22,7 +31,6 @@ def create_shop_admin(data: CreateShopAdmin, db: Session = Depends(get_db)):
 
     # 🔹 Generate unique shop code
     shop_code = generate_shop_code()
-
     while db.query(Shop).filter(Shop.shop_code == shop_code).first():
         shop_code = generate_shop_code()
 
@@ -60,5 +68,3 @@ def create_shop_admin(data: CreateShopAdmin, db: Session = Depends(get_db)):
         "message": "Shop admin created successfully",
         "shop_code": shop_code
     }
-
-

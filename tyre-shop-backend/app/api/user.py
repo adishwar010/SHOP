@@ -3,9 +3,19 @@ from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
 from app.models.user import User
+
+from app.core.dependencies import get_current_user
 from app.core.constants import Roles
 
-router = APIRouter()
+router = APIRouter(tags=["User"])
+
+@router.get("/debug-auth")
+def debug_auth(current_user: User = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "role": current_user.role
+    }
 
 
 # 🔹 GET ALL USERS (ADMIN ONLY)

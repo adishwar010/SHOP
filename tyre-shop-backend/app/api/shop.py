@@ -9,20 +9,20 @@ from app.models.join_request import JoinRequest
 from app.schemas.shop import JoinShopRequest
 from app.core.constants import RequestStatus, Roles
 
-router = APIRouter()
+from app.core.dependencies import get_current_user
+from app.core.permissions import require_shop_admin
+
+router = APIRouter(tags=["Shop"])
 
 
-# 🔹 REQUEST JOIN
+# 🔹 REQUEST JOIN (Sales Assistant)
 @router.post("/request-join")
 def request_join(
     data: JoinShopRequest,
     db: Session = Depends(get_db),
-    user_id: int = 1  # temp
+    current_user: User = Depends(get_current_user)
 ):
-    user = db.query(User).filter(User.id == user_id).first()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = current_user
 
     if user.shop_id:
         raise HTTPException(status_code=400, detail="Already assigned to a shop")
@@ -56,12 +56,9 @@ def request_join(
 @router.get("/join-requests")
 def get_requests(
     db: Session = Depends(get_db),
-    user_id: int = 1
+    current_user: User = Depends(get_current_user)
 ):
-    admin = db.query(User).filter(User.id == user_id).first()
-
-    if not admin or admin.role != Roles.SHOP_ADMIN:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    require_shop_admin(current_user)
 
     # 🔥 cleanup expired
     db.query(JoinRequest).filter(
@@ -72,7 +69,7 @@ def get_requests(
     db.commit()
 
     requests = db.query(JoinRequest).filter(
-        JoinRequest.shop_id == admin.shop_id,
+        JoinRequest.shop_id == current_user.shop_id,
         JoinRequest.status == RequestStatus.PENDING
     ).all()
 
@@ -84,24 +81,22 @@ def get_requests(
 def approve_request(
     request_id: int,
     db: Session = Depends(get_db),
-    user_id: int = 1
+    current_user: User = Depends(get_current_user)
 ):
-    admin = db.query(User).filter(User.id == user_id).first()
-
-    if not admin or admin.role != Roles.SHOP_ADMIN:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    require_shop_admin(current_user)
 
     req = db.query(JoinRequest).filter(JoinRequest.id == request_id).first()
 
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
 
-    if req.shop_id != admin.shop_id:
+    # 🔐 shop isolation
+    if req.shop_id != current_user.shop_id:
         raise HTTPException(status_code=403, detail="Cannot approve other shop requests")
 
     user = db.query(User).filter(User.id == req.user_id).first()
 
-    user.shop_id = admin.shop_id
+    user.shop_id = current_user.shop_id
     user.status = RequestStatus.APPROVED
 
     req.status = RequestStatus.APPROVED
@@ -116,19 +111,17 @@ def approve_request(
 def reject_request(
     request_id: int,
     db: Session = Depends(get_db),
-    user_id: int = 1
+    current_user: User = Depends(get_current_user)
 ):
-    admin = db.query(User).filter(User.id == user_id).first()
-
-    if not admin or admin.role != Roles.SHOP_ADMIN:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    require_shop_admin(current_user)
 
     req = db.query(JoinRequest).filter(JoinRequest.id == request_id).first()
 
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
 
-    if req.shop_id != admin.shop_id:
+    # 🔐 shop isolation
+    if req.shop_id != current_user.shop_id:
         raise HTTPException(status_code=403, detail="Cannot reject other shop requests")
 
     req.status = RequestStatus.REJECTED

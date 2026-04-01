@@ -1,25 +1,35 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
 from app.models.user import User
-from app.schemas.user import UserCreate, UserLogin
+from app.schemas.user import UserCreate
 from app.core.security import hash_password, verify_password, create_access_token
 from app.core.constants import Roles
 
-router = APIRouter()
+router = APIRouter(tags=["Auth"])
 
 
+# -------------------------
+# REGISTER
+# -------------------------
 @router.post("/register")
 def register(user: UserCreate, db: Session = Depends(get_db)):
-    existing_user = db.query(User).filter(User.email == user.email).first()
+    # Normalize email
+    email = user.email.lower()
+
+    existing_user = db.query(User).filter(User.email == email).first()
 
     if existing_user:
-        raise HTTPException(status_code=400, detail="Email already exists")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already exists"
+        )
 
     new_user = User(
         name=user.name,
-        email=user.email,
+        email=email,
         password=hash_password(user.password),
         dob=user.dob,
         role=Roles.SALES_ASSISTANT,
@@ -30,33 +40,44 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_user)
 
-    return {"message": "User registered successfully"}
+    return {"message": "User registered successfully. Awaiting approval."}
 
 
+# -------------------------
+# LOGIN (JWT TOKEN)
+# -------------------------
 @router.post("/login")
-def login(user: UserLogin, db: Session = Depends(get_db)):
-
-    # 🔹 Normalize email
-    email = user.email.lower()
+def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    # OAuth2 uses "username" field → we treat it as email
+    email = form_data.username.lower()
 
     db_user = db.query(User).filter(User.email == email).first()
 
-    # 🔹 Check user + password
-    if not db_user or not verify_password(user.password, db_user.password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+    # Validate credentials
+    if not db_user or not verify_password(form_data.password, db_user.password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials"
+        )
 
-    # 🔹 Check approval
+    # Check if user is approved
     if db_user.status != "APPROVED":
-        raise HTTPException(status_code=403, detail="User not approved yet")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not approved yet"
+        )
 
-    # 🔹 Create token with useful data
-    token = create_access_token({
+    # Create JWT token
+    access_token = create_access_token({
         "sub": db_user.email,
         "user_id": db_user.id,
         "role": db_user.role
     })
 
     return {
-        "access_token": token,
+        "access_token": access_token,
         "token_type": "bearer"
     }

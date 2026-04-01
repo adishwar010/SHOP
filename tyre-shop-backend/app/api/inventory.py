@@ -7,21 +7,26 @@ from app.models.inventory import Inventory
 from app.models.purchase import Purchase
 from app.models.sale import Sale
 from app.models.user import User
+from app.models.shop import Shop
 from app.schemas.inventory import CreateTyre, PurchaseTyre, SellTyre
+from app.utils.profits import get_average_purchase_price
 
-router = APIRouter()
+from app.core.dependencies import get_current_user
+from app.core.permissions import require_shop_admin, require_same_shop
+
+router = APIRouter(tags=["Inventory"])
 
 
-# GET ALL TYRES
+# 🔹 GET ALL TYRES
 @router.get("/tyres")
-def get_tyres(db: Session = Depends(get_db), user_id: int = 1):
+def get_tyres(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if not current_user.shop_id:
+        raise HTTPException(status_code=403, detail="Not assigned to any shop")
 
-    user = db.query(User).filter(User.id == user_id).first()
-
-    if not user or not user.shop_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
-
-    tyres = db.query(Tyre).filter(Tyre.shop_id == user.shop_id).all()
+    tyres = db.query(Tyre).filter(Tyre.shop_id == current_user.shop_id).all()
 
     result = []
 
@@ -40,19 +45,21 @@ def get_tyres(db: Session = Depends(get_db), user_id: int = 1):
 
     return result
 
-# 🔹 CREATE TYRE
-@router.post("/tyre")
-def create_tyre(data: CreateTyre, db: Session = Depends(get_db), user_id: int = 1):
-    user = db.query(User).filter(User.id == user_id).first()
 
-    if not user or not user.shop_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
+# 🔹 CREATE TYRE (SHOP ADMIN ONLY)
+@router.post("/tyre")
+def create_tyre(
+    data: CreateTyre,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    require_shop_admin(current_user)
 
     tyre = Tyre(
         brand=data.brand,
         size=data.size,
         type=data.type,
-        shop_id=user.shop_id
+        shop_id=current_user.shop_id
     )
 
     db.add(tyre)
@@ -71,22 +78,25 @@ def create_tyre(data: CreateTyre, db: Session = Depends(get_db), user_id: int = 
     return {"message": "Tyre created", "tyre_id": tyre.id}
 
 
-# 🔹 PURCHASE (ADD STOCK)
+# 🔹 PURCHASE (SHOP ADMIN ONLY)
 @router.post("/purchase")
-def purchase_tyre(data: PurchaseTyre, db: Session = Depends(get_db), user_id: int = 1):
-    user = db.query(User).filter(User.id == user_id).first()
-
-    if not user or not user.shop_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
+def purchase_tyre(
+    data: PurchaseTyre,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    require_shop_admin(current_user)
 
     tyre = db.query(Tyre).filter(Tyre.id == data.tyre_id).first()
 
     if not tyre:
         raise HTTPException(status_code=404, detail="Tyre not found")
 
+    # 🔐 SHOP ISOLATION
+    require_same_shop(current_user, tyre.shop_id)
+
     inventory = db.query(Inventory).filter(Inventory.tyre_id == tyre.id).first()
 
-    # 🔥 TRANSACTION START
     try:
         inventory.quantity += data.quantity
 
@@ -105,33 +115,63 @@ def purchase_tyre(data: PurchaseTyre, db: Session = Depends(get_db), user_id: in
 
     return {"message": "Stock updated", "new_quantity": inventory.quantity}
 
-
-# 🔹 SELL (REDUCE STOCK)
+#SELL TYRE
 @router.post("/sell")
-def sell_tyre(data: SellTyre, db: Session = Depends(get_db), user_id: int = 1):
-    user = db.query(User).filter(User.id == user_id).first()
-
-    if not user or not user.shop_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
+def sell_tyre(
+    data: SellTyre,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if not current_user.shop_id:
+        raise HTTPException(status_code=403, detail="Not assigned to any shop")
 
     tyre = db.query(Tyre).filter(Tyre.id == data.tyre_id).first()
 
     if not tyre:
         raise HTTPException(status_code=404, detail="Tyre not found")
 
+    # 🔐 SHOP ISOLATION
+    require_same_shop(current_user, tyre.shop_id)
+
     inventory = db.query(Inventory).filter(Inventory.tyre_id == tyre.id).first()
 
     if inventory.quantity < data.quantity:
         raise HTTPException(status_code=400, detail="Insufficient stock")
 
-    # 🔥 TRANSACTION (CRITICAL)
+    # 🔥 STEP 1 — Get latest purchase price
+    latest_purchase = db.query(Purchase)\
+        .filter(Purchase.tyre_id == tyre.id)\
+        .order_by(Purchase.id.desc())\
+        .first()
+
+    if not latest_purchase:
+        raise HTTPException(status_code=400, detail="No purchase history found")
+
+    latest_cp = latest_purchase.purchase_price
+
+    # 🔥 STEP 2 — Get shop margin
+    shop = db.query(Shop).filter(Shop.id == current_user.shop_id).first()
+
+    margin = shop.margin_per_tyre if shop and shop.margin_per_tyre else 350
+
+    # 🔥 STEP 3 — Calculate suggested price
+    calculated_price = latest_cp + margin
+
+    # 🔥 STEP 4 — Assistant override
+    final_price = data.selling_price if data.selling_price else calculated_price
+
+    # 🔥 STEP 5 — Safety check (NO LOSS)
+    if final_price < latest_cp:
+        raise HTTPException(status_code=400, detail="Cannot sell below cost price")
+
     try:
         inventory.quantity -= data.quantity
 
         sale = Sale(
             tyre_id=tyre.id,
             quantity=data.quantity,
-            selling_price=data.selling_price
+            selling_price=final_price,
+            cost_price = latest_cp
         )
 
         db.add(sale)
@@ -141,4 +181,8 @@ def sell_tyre(data: SellTyre, db: Session = Depends(get_db), user_id: int = 1):
         db.rollback()
         raise HTTPException(status_code=500, detail="Sale failed")
 
-    return {"message": "Sale recorded", "remaining_stock": inventory.quantity}
+    return {
+        "message": "Sale recorded",
+        "remaining_stock": inventory.quantity,
+        "selling_price_used": final_price
+    }
